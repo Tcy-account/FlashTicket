@@ -1,0 +1,124 @@
+# FlashTicket 本地中间件
+# 顶层 name 决定 Docker Desktop 中的分组名：所有容器折叠在 "flashticket" 组下，
+# 不设置 container_name，保持 project-service-N 默认命名，可对整组一键启动/停止。
+name: flashticket
+
+services:
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: "123456"
+      MYSQL_DATABASE: "flashticket"
+      TZ: "UTC"
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+      - --default-time-zone=+00:00
+    ports:
+      - "33061:3306"
+    volumes:
+      - flashticket-mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-p123456"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: redis:7.4
+    restart: unless-stopped
+    ports:
+      - "16379:6379"
+    volumes:
+      - flashticket-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  # ---- RocketMQ 5.x（M12 异步抢票，gRPC Proxy 架构）----
+  # 客户端走 gRPC 连 proxy:8081；proxy 经 namesrv 发现 broker，broker 端口仅内部可达。
+  namesrv:
+    image: apache/rocketmq:5.3.0
+    restart: unless-stopped
+    # 镜像以 rocketmq(uid=3000) 运行，named volume 默认 root 权限会写不进 store，
+    # 导致启动期 NPE（见 apache/rocketmq-site#737），这里提权 root 规避。
+    user: "0:0"
+    command: sh mqnamesrv
+    environment:
+      JAVA_OPT_EXT: "-Xms256m -Xmx256m -Xmn128m"
+    ports:
+      - "9876:9876"
+
+  broker:
+    image: apache/rocketmq:5.3.0
+    restart: unless-stopped
+    depends_on:
+      - namesrv
+    user: "0:0"
+    command: sh mqbroker -c /home/rocketmq/conf/broker.conf
+    environment:
+      NAMESRV_ADDR: "namesrv:9876"
+      JAVA_OPT_EXT: "-Xms512m -Xmx512m -Xmn256m"
+    volumes:
+      - ./docker/rocketmq/broker.conf:/home/rocketmq/conf/broker.conf
+      - flashticket-rocketmq-data:/home/rocketmq/store
+    ports:
+      - "10909:10909"
+      - "10911:10911"
+
+  proxy:
+    image: apache/rocketmq:5.3.0
+    restart: unless-stopped
+    depends_on:
+      - namesrv
+      - broker
+    user: "0:0"
+    command: sh mqproxy
+    environment:
+      NAMESRV_ADDR: "namesrv:9876"
+      JAVA_OPT_EXT: "-Xms256m -Xmx256m"
+    # 8081 = gRPC（后端 v5 客户端用，必须暴露）；8080 = HTTP/remoting（仅管理/4.x 兼容，
+    # 后端用不到）——宿主映射改 18080 避开与后端 server.port=8080 的冲突。
+    ports:
+      - "18080:8080"
+      - "8081:8081"
+
+  # ---- 监控栈（M17-04：Prometheus 抓指标 + Grafana 可视化）----
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - flashticket-prometheus-data:/prometheus
+    # 容器内抓宿主机后端 8080 需要 host.docker.internal（Windows Docker Desktop 内置；
+    # 加 host-gateway 兜底兼容 Linux）
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./docker/grafana/dashboards:/etc/grafana/dashboards:ro
+      - flashticket-grafana-data:/var/lib/grafana
+
+volumes:
+  flashticket-mysql-data:
+  flashticket-redis-data:
+  flashticket-rocketmq-data:
+  flashticket-prometheus-data:
+  flashticket-grafana-data:

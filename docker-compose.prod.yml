@@ -1,0 +1,182 @@
+# FlashTicket 生产编排（2C1G / 30G 盘 · 无域名纯 IP）
+#
+# 拓扑：
+#   nginx(8080→用户端, 8081→管理端) → backend:8080 → mysql / redis / rocketmq
+#   中间件端口一律不映射到宿主机，只有网关对外。
+#
+# 使用：docker compose -f docker-compose.prod.yml up -d
+# 变量：同目录 .env（DB_PASSWORD / SUPER_ADMIN_PASSWORD 必填）
+
+name: flashticket-prod
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  # ---------------- MySQL ----------------
+  mysql:
+    image: mysql:8.4
+    restart: always
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+      # 全链路 UTC，与后端 DATETIME(3) 存储口径一致
+      - --default-time-zone=+00:00
+      # 以下四项是 1G 内存能跑起来的唯一原因，别删
+      - --innodb-buffer-pool-size=64M
+      - --innodb-buffer-pool-instances=1
+      - --performance-schema=OFF
+      - --max-connections=50
+      - --innodb-redo-log-capacity=67108864
+      - --innodb-flush-method=O_DIRECT
+      - --table-open-cache=200
+      - --tmp-table-size=16M
+      - --max-heap-table-size=16M
+      - --skip-name-resolve
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD 必须在 .env 中设置}
+      MYSQL_DATABASE: flashticket
+      TZ: UTC
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-p${DB_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 40s
+    mem_limit: 420m
+    logging: *default-logging
+
+  # ---------------- Redis ----------------
+  redis:
+    image: redis:7-alpine
+    restart: always
+    # noeviction：内存满时直接报错，而不是静默淘汰 refresh token / 库存准入快照。
+    # 关掉 RDB，30G 小盘不值得为会话数据写盘；重启后用户重新登录即可。
+    command: ["redis-server", "--maxmemory", "96mb", "--maxmemory-policy", "noeviction", "--save", ""]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    mem_limit: 128m
+    logging: *default-logging
+
+  # ---------------- RocketMQ 5.3.0 ----------------
+  namesrv:
+    image: apache/rocketmq:5.3.0
+    restart: always
+    user: "0:0"
+    command: sh mqnamesrv
+    environment:
+      JAVA_OPT_EXT: "-Xms128m -Xmx128m -Xmn64m -XX:+UseSerialGC -XX:MaxMetaspaceSize=64m"
+    mem_limit: 260m
+    logging: *default-logging
+
+  broker:
+    image: apache/rocketmq:5.3.0
+    restart: always
+    depends_on:
+      - namesrv
+    user: "0:0"
+    command: sh mqbroker -c /home/rocketmq/conf/broker.conf
+    environment:
+      NAMESRV_ADDR: "namesrv:9876"
+      JAVA_OPT_EXT: "-Xms256m -Xmx256m -Xmn128m -XX:+UseSerialGC -XX:MaxMetaspaceSize=96m -XX:MaxDirectMemorySize=128m"
+    volumes:
+      - ./docker/rocketmq/broker.prod.conf:/home/rocketmq/conf/broker.conf:ro
+      - rocketmq-store:/home/rocketmq/store
+    mem_limit: 460m
+    logging: *default-logging
+
+  proxy:
+    image: apache/rocketmq:5.3.0
+    restart: always
+    depends_on:
+      - namesrv
+      - broker
+    user: "0:0"
+    command: sh mqproxy
+    environment:
+      NAMESRV_ADDR: "namesrv:9876"
+      JAVA_OPT_EXT: "-Xms128m -Xmx128m -XX:+UseSerialGC -XX:MaxMetaspaceSize=64m"
+    mem_limit: 260m
+    logging: *default-logging
+
+  # 一次性任务：预建 topic。
+  # 原因：autoCreateTopicEnable 只对 producer 发送生效，消费者订阅不存在的 topic
+  # 会直接报 No topic route info 并导致后端启动失败。
+  mq-init:
+    image: apache/rocketmq:5.3.0
+    depends_on:
+      - namesrv
+      - broker
+    user: "0:0"
+    environment:
+      JAVA_OPT_EXT: "-Xms64m -Xmx128m -XX:+UseSerialGC"
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        echo "[mq-init] 等待 broker 注册..."
+        until sh mqadmin clusterList -n namesrv:9876 >/dev/null 2>&1; do sleep 3; done
+        sh mqadmin updatetopic -n namesrv:9876 -t ft-purchase -c DefaultCluster || true
+        sh mqadmin updatetopic -n namesrv:9876 -t ft-order-close -c DefaultCluster || true
+        sh mqadmin updatetopic -n namesrv:9876 -t ft-notification -c DefaultCluster || true
+        echo "[mq-init] 三个 topic 已就绪"
+    restart: "no"
+    mem_limit: 320m
+    logging: *default-logging
+
+  # ---------------- 后端 ----------------
+  backend:
+    image: flashticket-backend:1.0.0
+    build:
+      context: ./backend
+    restart: always
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mq-init:
+        condition: service_completed_successfully
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      DB_PASSWORD: ${DB_PASSWORD}
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      ROCKETMQ_ENDPOINTS: proxy:8081
+      SUPER_ADMIN_ENABLED: "true"
+      SUPER_ADMIN_USERNAME: ${SUPER_ADMIN_USERNAME:-superadmin}
+      SUPER_ADMIN_EMAIL: ${SUPER_ADMIN_EMAIL:-superadmin@flashticket.local}
+      SUPER_ADMIN_PASSWORD: ${SUPER_ADMIN_PASSWORD:?SUPER_ADMIN_PASSWORD 必须在 .env 中设置}
+      TZ: UTC
+    volumes:
+      - backend-logs:/app/logs
+    mem_limit: 560m
+    logging: *default-logging
+
+  # ---------------- 网关（双前端 + 反代） ----------------
+  gateway:
+    image: nginx:1.27-alpine
+    restart: always
+    depends_on:
+      - backend
+    ports:
+      - "${WEB_PORT:-8080}:80"     # 用户端
+      - "${ADMIN_PORT:-8081}:8081" # 管理端
+    volumes:
+      - ./docker/nginx/nginx.prod.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./html/ticket-web:/usr/share/nginx/html/ticket-web:ro
+      - ./html/admin-web:/usr/share/nginx/html/admin-web:ro
+    mem_limit: 64m
+    logging: *default-logging
+
+volumes:
+  mysql-data:
+  rocketmq-store:
+  backend-logs:

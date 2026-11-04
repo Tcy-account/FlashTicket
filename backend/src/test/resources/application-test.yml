@@ -1,0 +1,13 @@
+# test profile 专用配置：放宽风控限流阈值，避免限流干扰既有业务集成测试。
+# 限流正确性由 RiskRateLimitIntegrationTest 通过 @DynamicPropertySource 覆盖为 1 单独验证。
+flashticket:
+  risk:
+    rate-limit:
+      purchase-limit: 1000
+      purchase-window: 5s
+      claim-limit: 1000
+      claim-window: 5s
+      pay-limit: 1000
+      pay-window: 5s
+      query-limit: 100000
+      query-window: 60s

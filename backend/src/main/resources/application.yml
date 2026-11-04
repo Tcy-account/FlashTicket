@@ -1,0 +1,157 @@
+spring:
+  application:
+    name: flashticket
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:local}
+
+  datasource:
+    # 默认值面向「本地开发」：后端跑在宿主机，连 Docker 映射出来的端口。
+    # 生产（后端在容器内）由 application-prod.yml 覆盖为 mysql:3306。
+    # 注意：主机名与端口必须成对匹配，mysql:33061 这种组合两种场景都连不通。
+    url: ${DB_URL:jdbc:mysql://127.0.0.1:33061/flashticket?useUnicode=true&characterEncoding=utf8&connectionTimeZone=UTC&forceConnectionTimeZoneToSession=false}
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:123456}
+    hikari:
+      pool-name: FlashTicketHikari
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 3000
+      validation-timeout: 1000
+      max-lifetime: 1800000
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: false
+
+  data:
+    redis:
+      # 同上：本地开发连宿主机映射端口 16379，容器内是 redis:6379（见 prod profile）
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:16379}
+      password: ${REDIS_PASSWORD:}
+      timeout: 2s
+      connect-timeout: 2s
+
+  jackson:
+    time-zone: UTC
+    serialization:
+      write-dates-as-timestamps: false
+    default-property-inclusion: always
+
+server:
+  port: 8080
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+  global-config:
+    banner: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: when-authorized
+
+# RocketMQ 5.x gRPC 客户端（M12 异步抢票，连本地 Proxy 8081）
+# 消费端 topic/tag/endpoints 经 @RocketMQMessageListener 注解默认占位符读取；
+# consumerGroup 在注解上显式声明。本地未开 ACL/TLS。
+rocketmq:
+  producer:
+    endpoints: ${ROCKETMQ_ENDPOINTS:localhost:8081}
+    access-key: ""
+    secret-key: ""
+    request-timeout: 3000
+    max-attempts: 3
+    ssl-enabled: false
+  push-consumer:
+    endpoints: ${ROCKETMQ_ENDPOINTS:localhost:8081}
+    access-key: ""
+    secret-key: ""
+    topic: ${ROCKETMQ_PURCHASE_TOPIC:ft-purchase}
+    tag: "*"
+  # 订单支付超时延迟关单（M12）：独立 topic/tag，避免与抢票消息串扰
+  order-close:
+    topic: ${ROCKETMQ_ORDER_CLOSE_TOPIC:ft-order-close}
+    tag: ${ROCKETMQ_ORDER_CLOSE_TAG:ORDER_CLOSE}
+  # 系统通知（M14）：独立 topic/tag，避免与抢票/关单消息串扰
+  notification:
+    topic: ${ROCKETMQ_NOTIFICATION_TOPIC:ft-notification}
+    tag: "*"
+
+# FlashTicket 认证与会话配置（M02）
+flashticket:
+  jwt:
+    # 仅开发用密钥（勿用于生产，生产由外部密钥管理系统注入）
+    private-key: classpath:jwt/private.pem
+    public-key: classpath:jwt/public.pem
+    access-token-ttl: 15m
+    refresh-token-ttl: 7d
+    refresh-cookie: ft_refresh_token
+    admin-refresh-cookie: ft_admin_refresh_token
+  auth:
+    max-sessions: 5
+    login-max-fail: 5
+    login-lock-duration: 10m
+    login-fail-window: 15m
+  # 超级管理员安全引导（M03）：不在种子数据硬编码生产密码，启动时按需创建。
+  # 仅本地/开发环境开启；生产务必关闭 enabled 并通过环境变量注入初始密码。
+  event:
+    session:
+      clear-buffer-minutes: 30
+  # 订单交易配置（M08）：待支付订单支付期限（分钟），从订单创建时刻起算。
+  order:
+    payment-timeout-minutes: 15
+  # 抢票异步排队配置（M12）：处理租约、重试与恢复扫描。
+  purchase:
+    lease-seconds: 30
+    retry-seconds: 5
+    accept-deadline-seconds: 60
+    recovery-scan-delay-ms: 5000
+    recovery-batch: 100
+    recovery-interval-seconds: 30
+  # Outbox 发布器配置（M12）
+  messaging:
+    outbox:
+      scan-delay-ms: 1000
+      batch-size: 100
+      lease-seconds: 30
+      retry-seconds: 5
+  # 风控限流配置（M15-A）：Redis Lua 滑动窗口，本地开发初始策略，非生产最佳配置
+  risk:
+    rate-limit:
+      purchase-limit: 1
+      purchase-window: 5s
+      claim-limit: 1
+      claim-window: 5s
+      pay-limit: 1
+      pay-window: 5s
+      query-limit: 120
+      query-window: 60s
+    # 临时限制到期自动解除扫描间隔（M15-B）
+    restriction-expire-scan-ms: 60000
+
+  # 系统对账定时扫描间隔（M16-C）
+  reconciliation:
+    scan-delay-ms: 300000
+  # Redis 高速库存准入（M15-C 模式3）：默认关闭（=模式2 纯 MySQL 原子库存），
+  # 开启后抢票受理前用 Redis Lua 预检库存，MySQL 仍为权威账本
+  inventory:
+    redis-admission:
+      enabled: false
+      reconcile-ms: 10000
+  bootstrap:
+    super-admin:
+      enabled: true
+      username: superadmin
+      email: superadmin@flashticket.local
+      password: "SuperAdmin@2026"
+
+logging:
+  level:
+    root: INFO
+    com.flashticket: DEBUG

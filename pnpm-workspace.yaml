@@ -1,0 +1,9 @@
+packages:
+  - apps/*
+  - packages/*
+
+# pnpm 11：仅允许这些依赖执行构建脚本（vite 依赖 esbuild，naive-ui 依赖 vue-demi）
+allowBuilds:
+  '@parcel/watcher': true
+  esbuild: true
+  vue-demi: true

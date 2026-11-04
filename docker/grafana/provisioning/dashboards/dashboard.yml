@@ -1,0 +1,13 @@
+# Grafana 看板自动加载（M17-04）
+apiVersion: 1
+
+providers:
+  - name: 'FlashTicket'
+    orgId: 1
+    folder: 'FlashTicket'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/dashboards

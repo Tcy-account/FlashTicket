@@ -1,0 +1,15 @@
+# 只排除编译中间产物，保留 target/*.jar 供 COPY 使用
+target/classes/
+target/test-classes/
+target/maven-status/
+target/maven-archiver/
+target/generated-sources/
+target/generated-test-sources/
+target/surefire-reports/
+target/failsafe-reports/
+*.iml
+.idea/
+.mvn/
+mvnw
+mvnw.cmd
+Dockerfile

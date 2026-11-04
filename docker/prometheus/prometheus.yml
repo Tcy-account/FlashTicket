@@ -1,0 +1,18 @@
+# FlashTicket Prometheus 配置（M17-04）
+# 抓取后端 Actuator 的 /actuator/prometheus 指标。
+# 注意：Prometheus 在容器内运行，抓宿主机的后端用 host.docker.internal（Docker Desktop 专用别名）。
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'flashticket-backend'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['host.docker.internal:8080']
+        labels:
+          app: 'flashticket'
+
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']

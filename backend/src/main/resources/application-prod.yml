@@ -1,0 +1,73 @@
+# FlashTicket 生产环境配置（profile=prod）
+# 所有敏感值走环境变量，由 .env 注入；此处只放默认可选项。
+# 生效方式：容器内 SPRING_PROFILES_ACTIVE=prod，覆盖 application.yml 同名项。
+
+spring:
+  datasource:
+    # 容器网络内 MySQL 用 3306，宿主机映射的 33061 只用于本地调试
+    url: ${DB_URL:jdbc:mysql://mysql:3306/flashticket?useUnicode=true&characterEncoding=utf8&connectionTimeZone=UTC&forceConnectionTimeZoneToSession=false}
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD}
+    hikari:
+      pool-name: FlashTicketHikari
+      # 1G 内存机器：连接是稀缺资源，8 个足够跑通全部链路
+      maximum-pool-size: 8
+      minimum-idle: 2
+      connection-timeout: 3000
+      validation-timeout: 1000
+      max-lifetime: 1800000
+
+  data:
+    redis:
+      host: ${REDIS_HOST:redis}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      timeout: 2s
+      connect-timeout: 2s
+
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+
+server:
+  port: 8080
+  # 优雅停机：重建容器时等在途请求（含抢票受理）处理完再退出
+  shutdown: graceful
+  tomcat:
+    threads:
+      max: 50
+      min-spare: 5
+    max-connections: 200
+    accept-count: 100
+
+rocketmq:
+  producer:
+    endpoints: ${ROCKETMQ_ENDPOINTS:proxy:8081}
+  push-consumer:
+    endpoints: ${ROCKETMQ_ENDPOINTS:proxy:8081}
+
+flashticket:
+  # 生产强制由环境变量注入初始超管密码（12-64 位且满足强度策略），
+  # 库里已有有效超管时该逻辑自动跳过。
+  bootstrap:
+    super-admin:
+      enabled: ${SUPER_ADMIN_ENABLED:true}
+      username: ${SUPER_ADMIN_USERNAME:superadmin}
+      email: ${SUPER_ADMIN_EMAIL:superadmin@flashticket.local}
+      password: ${SUPER_ADMIN_PASSWORD:}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        # 生产不暴露 prometheus/metrics 到公网，只留健康检查
+        include: health,info
+  endpoint:
+    health:
+      show-details: never
+
+logging:
+  level:
+    root: INFO
+    com.flashticket: INFO
+    # 生产排查 MQ 消费/Outbox 补发时临时改成 DEBUG，改完记得改回
+    # com.flashticket.messaging: DEBUG

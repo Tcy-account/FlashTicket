@@ -1,0 +1,46 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* 品牌色（前端规范第四节） */
+  --brand: #635bff;
+  --brand-hover: #5148e5;
+  --brand-light: #f0efff;
+  --brand-dark: #19182f;
+
+  /* 基础色 */
+  --text-primary: #111827;
+  --text-secondary: #6b7280;
+  --text-tertiary: #9ca3af;
+  --bg-page: #f5f6fa;
+  --bg-card: #ffffff;
+  --border: #e5e7eb;
+
+  /* 功能状态色 */
+  --success: #16a34a;
+  --warning: #f59e0b;
+  --error: #ef4444;
+  --snap: #f43f5e;
+  --info: #3b82f6;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  font-family: 'PingFang SC', 'Microsoft YaHei', 'Inter', system-ui, sans-serif;
+  background: var(--bg-page);
+  color: var(--text-primary);
+}
+
+a {
+  color: var(--brand);
+  text-decoration: none;
+}

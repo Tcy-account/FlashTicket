@@ -1,0 +1,53 @@
+# Java / Maven
+backend/target/
+**/target/
+*.class
+*.jar
+!.mvn/wrapper/maven-wrapper.jar
+
+# Local secrets (never commit)
+application-local.yml
+.env
+.env.*
+!.env.example
+backend/src/main/resources/jwt/private.pem
+*.pem
+!backend/src/main/resources/jwt/public.pem.example
+!*.pem.example
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.settings/
+.classpath
+.project
+.workbuddy/
+
+# Logs / OS
+logs/
+*.log
+.DS_Store
+Thumbs.db
+
+# Frontend
+node_modules/
+dist/
+.vite/
+
+# E2E / loadtest artifacts
+e2e/node_modules/
+e2e/playwright-report/
+e2e/test-results/
+e2e/loadtest/report-mode*/
+e2e/loadtest/*.jtl
+e2e/loadtest/jmeter.log
+e2e/.seed.json
+
+# Prod deploy artifacts
+html/
+
+# Bundled JMeter (install locally; do not commit)
+tools/apache-jmeter-*/
+tools/apache-jmeter-*.zip
+
