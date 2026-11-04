@@ -29,19 +29,36 @@ docker compose up -d
 **首次启动需预创建 MQ topic**（RocketMQ 不自动建 topic 供消费，缺 topic 会导致消费者启动报 `No topic route info`）：
 
 ```bash
+bash scripts/create-mq-topics.sh
+```
+
+脚本等价于下面三条（Windows 可用 Git Bash / WSL；不用 bash 时在 PowerShell 里逐条执行也行）：
+
+```bash
 docker exec flashticket-broker-1 sh mqadmin updatetopic -n namesrv:9876 -t ft-purchase      -c DefaultCluster
 docker exec flashticket-broker-1 sh mqadmin updatetopic -n namesrv:9876 -t ft-order-close  -c DefaultCluster
 docker exec flashticket-broker-1 sh mqadmin updatetopic -n namesrv:9876 -t ft-notification -c DefaultCluster
 ```
 
-### 2. 启动后端
+### 2. 准备 JWT 密钥再启动后端
+
+`JwtService` 用 RS256，启动时读取 `classpath:jwt/private.pem`（PKCS#8）和 `classpath:jwt/public.pem`（X.509）。`private.pem` 在 `.gitignore` 里，仓库只提交 `public.pem.example`，**它没有配对私钥**，不能单独拷来用。在仓库根目录生成一对本地开发密钥（两个文件都会被 `*.pem` 忽略，不要提交）：
+
+```bash
+mkdir -p backend/src/main/resources/jwt
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 \
+  -out backend/src/main/resources/jwt/private.pem
+openssl rsa -pubout \
+  -in backend/src/main/resources/jwt/private.pem \
+  -out backend/src/main/resources/jwt/public.pem
+```
 
 ```bash
 cd backend
 mvn spring-boot:run
 ```
 
-默认激活 `local` profile，连接 localhost:33061 / localhost:16379 / RocketMQ proxy gRPC 8081。
+默认激活 `local` profile，连接 localhost:33061 / localhost:16379 / RocketMQ proxy gRPC 8081。缺私钥时启动失败，日志为「无法加载 JWT 私钥」。生产不要用这把开发密钥，见 `doc/密钥与敏感信息检查清单.md`。
 
 > 若在 WorkBuddy 等会注入 `SERVER__PORT` 环境变量的 IDE 里启动，用 `env -u SERVER__PORT mvn spring-boot:run` 避免 relaxed binding 覆盖 yml 端口。
 
@@ -57,7 +74,7 @@ pnpm dev       # 一键并行启动双前端
 | 用户端 ticket-web | http://localhost:5173 | Vue3 + TS + Vite + Naive UI + Tailwind + Pinia |
 | 管理端 admin-web | http://localhost:5174 | Vue3 + TS + Vite + Element Plus + SCSS + Pinia |
 
-- 开发专用调试页：http://localhost:5173/dev/api-lab（仅开发环境，生产构建排除）。
+- 开发专用调试页：http://localhost:5173/dev/api-lab（仅开发环境，生产构建排除）。页面里目前标成可调用的是健康检查；抢票到支付的复制步骤见 `doc/DEMO-10min.md`。
 - Vite 已配置 `/api`、`/actuator` 代理到 `http://localhost:8080`。
 
 ### 4. 验证与监控
@@ -103,6 +120,7 @@ FlashTicket/
 ├── e2e/                  # 独立 E2E + 压测（Playwright 冒烟 + JMeter）
 │   ├── global-setup.ts / tests/smoke.spec.ts   # 关键路径冒烟
 │   └── loadtest/         # JMeter 抢票压测（checkout.jmx / seed-loadtest.ts）
+├── scripts/              # 可选演示脚本（create-mq-topics.sh）
 ├── docker/               # nginx / prometheus / grafana / rocketmq 配置
 ├── docker-compose.yml    # flashticket 中间件分组（含监控栈）
 ├── package.json          # pnpm dev 一键启动入口
@@ -122,6 +140,19 @@ FlashTicket/
 - 权限：`@PreAuthorize("hasAuthority({域}:{资源}:{动作})")`，角色 USER/OPERATOR/FINANCE/ADMIN/SUPER_ADMIN
 
 ## 文档索引
+
+### 演示与面试（doc/）
+
+| 文档 | 内容 |
+|---|---|
+| `架构与设计说明.md` | 模块化单体、异步抢票、库存三态、支付/关单、监控 |
+| `技术栈说明.md` | 版本表与范围（票务订单后端，不是完整商城） |
+| `DEMO-10min.md` | 可复制的 10 分钟演示：compose、topic、JWT、202、轮询、mock 支付 |
+| `深挖-条件扣减防超卖.md` | `InventoryMapper` 条件更新 |
+| `深挖-Outbox与Inbox.md` | 受理同事务 Outbox、发布租约、Inbox、处理租约 |
+| `深挖-支付幂等与关单补偿.md` | `attempt_request_id`、`markPaid` 与 `closeById` |
+| `简历要点.md` | 可对照仓库的简历表述 |
+| `密钥与敏感信息检查清单.md` | `.gitignore`、`.env`、`application-local.yml`、JWT 私钥 |
 
 ### 设计文档（doc/）
 
