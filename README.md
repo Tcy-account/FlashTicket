@@ -16,17 +16,23 @@ docker compose up -d
 
 | 服务 | 镜像 | 宿主端口 | 说明 |
 |---|---|---|---|
-| mysql | mysql:8.4 | 33061 | 库名 flashticket，utf8mb4，UTC，root/123456 |
+| mysql | mysql:8.4 | 33061 | 库名 flashticket，utf8mb4，UTC。用户名 `DB_USERNAME`，口令 `DB_PASSWORD`，见本地 yml，勿写入本文 |
 | redis | redis:7.4 | 16379 | 无密码（本地），会话/限流/库存准入快照 |
 | namesrv | apache/rocketmq:5.3.0 | 9876 | RocketMQ 注册中心 |
 | broker | apache/rocketmq:5.3.0 | 10911 | 消息存储 |
 | proxy | apache/rocketmq:5.3.0 | 8081 (gRPC) / 18080 (HTTP) | 后端 v5 客户端连 gRPC 8081 |
 | prometheus | prom/prometheus:v2.55.1 | 9090 | 抓后端 `/actuator/prometheus` |
-| grafana | grafana/grafana:11.4.0 | 3000 | admin/admin，预置「FlashTicket 运营监控」看板 |
+| grafana | grafana/grafana:11.4.0 | 3000 | 预置「FlashTicket 运营监控」看板。账号见 `GF_SECURITY_ADMIN_USER` / `GF_SECURITY_ADMIN_PASSWORD` |
 
 > 端口特意避开本地 3306/6379（本机已装 MySQL 9.3），防止冲突。
 
 **首次启动需预创建 MQ topic**（RocketMQ 不自动建 topic 供消费，缺 topic 会导致消费者启动报 `No topic route info`）：
+
+```bash
+bash scripts/create-mq-topics.sh
+```
+
+脚本等价于下面三条（Windows 可用 Git Bash / WSL；不用 bash 时在 PowerShell 里逐条执行也行）：
 
 ```bash
 docker exec flashticket-broker-1 sh mqadmin updatetopic -n namesrv:9876 -t ft-purchase      -c DefaultCluster
@@ -34,14 +40,25 @@ docker exec flashticket-broker-1 sh mqadmin updatetopic -n namesrv:9876 -t ft-or
 docker exec flashticket-broker-1 sh mqadmin updatetopic -n namesrv:9876 -t ft-notification -c DefaultCluster
 ```
 
-### 2. 启动后端
+### 2. 准备 JWT 密钥再启动后端
+
+`JwtService` 用 RS256，启动时读取 `classpath:jwt/private.pem`（PKCS#8）和 `classpath:jwt/public.pem`（X.509）。`private.pem` 在 `.gitignore` 里，仓库只提交 `public.pem.example`，**它没有配对私钥**，不能单独拷来用。在仓库根目录生成一对本地开发密钥（两个文件都会被 `*.pem` 忽略，不要提交）：
+
+```bash
+mkdir -p backend/src/main/resources/jwt
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 \
+  -out backend/src/main/resources/jwt/private.pem
+openssl rsa -pubout \
+  -in backend/src/main/resources/jwt/private.pem \
+  -out backend/src/main/resources/jwt/public.pem
+```
 
 ```bash
 cd backend
 mvn spring-boot:run
 ```
 
-默认激活 `local` profile，连接 localhost:33061 / localhost:16379 / RocketMQ proxy gRPC 8081。
+默认激活 `local` profile，连接 localhost:33061 / localhost:16379 / RocketMQ proxy gRPC 8081。缺私钥时启动失败，日志为「无法加载 JWT 私钥」。生产不要用这把开发密钥，见 `doc/密钥与敏感信息检查清单.md`。
 
 > 若在 WorkBuddy 等会注入 `SERVER__PORT` 环境变量的 IDE 里启动，用 `env -u SERVER__PORT mvn spring-boot:run` 避免 relaxed binding 覆盖 yml 端口。
 
@@ -57,7 +74,7 @@ pnpm dev       # 一键并行启动双前端
 | 用户端 ticket-web | http://localhost:5173 | Vue3 + TS + Vite + Naive UI + Tailwind + Pinia |
 | 管理端 admin-web | http://localhost:5174 | Vue3 + TS + Vite + Element Plus + SCSS + Pinia |
 
-- 开发专用调试页：http://localhost:5173/dev/api-lab（仅开发环境，生产构建排除）。
+- 开发专用调试页：http://localhost:5173/dev/api-lab（仅开发环境，生产构建排除）。页面里目前标成可调用的是健康检查；抢票到支付的复制步骤见 `docs/interview/DEMO-10min.md`。
 - Vite 已配置 `/api`、`/actuator` 代理到 `http://localhost:8080`。
 
 ### 4. 验证与监控
@@ -68,7 +85,7 @@ pnpm dev       # 一键并行启动双前端
 | `GET http://localhost:8080/api/v1/health/readiness` | 200，`db=UP` + `redis=UP` |
 | `GET http://localhost:8080/actuator/prometheus` | Prometheus 指标（M17 起） |
 | http://localhost:9090 | Prometheus（target `flashticket-backend` 应 `up`） |
-| http://localhost:3000 | Grafana（admin/admin，预置「FlashTicket 运营监控」看板） |
+| http://localhost:3000 | Grafana（预置「FlashTicket 运营监控」看板；口令见 compose 的 `GF_SECURITY_ADMIN_PASSWORD`，勿写入本文） |
 
 停掉 flashticket 分组后再次请求 readiness，应返回 **503 + `SERVICE_UNAVAILABLE`**。
 
@@ -76,7 +93,8 @@ pnpm dev       # 一键并行启动双前端
 
 ```
 FlashTicket/
-├── doc/                  # 设计文档 + M00/M17 交付文档（见下方索引）
+├── docs/                 # 系统设计说明书、中间件使用文档、interview 附录
+├── doc/                  # 早期模块设计 + M00/M17 交付；架构/技术栈页只跳转到 docs/
 ├── backend/              # Java 后端（单 Maven 工程）
 │   ├── src/main/java/com/flashticket/   # 按领域分包
 │   │   ├── common/       # 响应信封、错误码、全局异常、请求标识、安全
@@ -103,6 +121,7 @@ FlashTicket/
 ├── e2e/                  # 独立 E2E + 压测（Playwright 冒烟 + JMeter）
 │   ├── global-setup.ts / tests/smoke.spec.ts   # 关键路径冒烟
 │   └── loadtest/         # JMeter 抢票压测（checkout.jmx / seed-loadtest.ts）
+├── scripts/              # 可选演示脚本（create-mq-topics.sh）
 ├── docker/               # nginx / prometheus / grafana / rocketmq 配置
 ├── docker-compose.yml    # flashticket 中间件分组（含监控栈）
 ├── package.json          # pnpm dev 一键启动入口
@@ -122,6 +141,24 @@ FlashTicket/
 - 权限：`@PreAuthorize("hasAuthority({域}:{资源}:{动作})")`，角色 USER/OPERATOR/FINANCE/ADMIN/SUPER_ADMIN
 
 ## 文档索引
+
+阅读入口是正式说明书和中间件表。`doc/架构与设计说明.md`、`doc/技术栈说明.md` 只保留跳转，避免和说明书各写一套。
+
+| 文档 | 内容 |
+|---|---|
+| `docs/系统设计说明书.md` | 概述、总体架构、分模块设计、平台支撑（账号、Redis、RocketMQ、Outbox/Inbox、支付幂等、关单、监控） |
+| `docs/中间件使用文档.md` | MySQL、Redis、RocketMQ、Prometheus、Grafana 的连接项；口令只写配置键 |
+| `doc/密钥与敏感信息检查清单.md` | `.gitignore`、`.env`、`application-local.yml`、JWT 私钥 |
+
+### 附录：演示与面试（docs/interview/）
+
+| 文档 | 内容 |
+|---|---|
+| `DEMO-10min.md` | 可复制的 10 分钟演示 |
+| `深挖-条件扣减防超卖.md` | 库存条件更新 |
+| `深挖-Outbox与Inbox.md` | 事务消息 |
+| `深挖-支付幂等与关单补偿.md` | 支付尝试号与关单 |
+| `简历要点.md` | 可对照仓库的简历短句 |
 
 ### 设计文档（doc/）
 
