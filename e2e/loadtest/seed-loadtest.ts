@@ -13,7 +13,7 @@ import path from 'path';
 
 const SUPERADMIN = {
   account: 'superadmin',
-  password: process.env.E2E_SUPERADMIN_PASSWORD ?? 'SuperAdmin@2026',
+  password: process.env.E2E_SUPERADMIN_PASSWORD ?? 'TestOnly_SuperAdmin_ChangeMe',
 };
 const USER_PASSWORD = 'Loadtest@123';
 

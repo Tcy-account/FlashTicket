@@ -5,7 +5,8 @@ set -e
 TIER_ID="${1:?用法: bash collect.sh <tierId> [窗口分钟]}"
 WINDOW="${2:-10}"
 
-MYSQL="docker exec flashticket-mysql-1 mysql -uroot -p123456 flashticket -N -e"
+MYSQL_PASSWORD="${DB_PASSWORD:-changeme}"
+MYSQL="docker exec flashticket-mysql-1 mysql -uroot -p${MYSQL_PASSWORD} flashticket -N -e"
 
 echo "======== 抢票请求状态分布（近 ${WINDOW} 分钟）========"
 $MYSQL "SELECT status, COUNT(*) FROM ft_purchase_request WHERE created_at > NOW() - INTERVAL ${WINDOW} MINUTE GROUP BY status ORDER BY status;"

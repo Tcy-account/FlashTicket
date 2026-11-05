@@ -2,10 +2,10 @@ import { api, unwrap, genId } from './helpers/api';
 import { getVerifyCode } from './helpers/redis';
 import { saveSeed, SeedData } from './helpers/seed-data';
 
-/** 超管账号（SuperAdminBootstrap 引导创建，密码见 application.yml bootstrap.super-admin.password）。 */
+/** 超管账号（SuperAdminBootstrap 引导创建，密码优先读 E2E_SUPERADMIN_PASSWORD；未设时用明显测试占位（须与本地 SUPER_ADMIN_PASSWORD 一致））。 */
 const SUPERADMIN = {
   account: 'superadmin',
-  password: process.env.E2E_SUPERADMIN_PASSWORD ?? 'SuperAdmin@2026',
+  password: process.env.E2E_SUPERADMIN_PASSWORD ?? 'TestOnly_SuperAdmin_ChangeMe',
 };
 
 /** 员工/用户密码（满足 12-64 位规则）。 */

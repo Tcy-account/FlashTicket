@@ -10,7 +10,7 @@ spring:
     # 注意：主机名与端口必须成对匹配，mysql:33061 这种组合两种场景都连不通。
     url: ${DB_URL:jdbc:mysql://127.0.0.1:33061/flashticket?useUnicode=true&characterEncoding=utf8&connectionTimeZone=UTC&forceConnectionTimeZoneToSession=false}
     username: ${DB_USERNAME:root}
-    password: ${DB_PASSWORD:123456}
+    password: ${DB_PASSWORD:changeme}
     hikari:
       pool-name: FlashTicketHikari
       maximum-pool-size: 10
@@ -99,7 +99,8 @@ flashticket:
     login-lock-duration: 10m
     login-fail-window: 15m
   # 超级管理员安全引导（M03）：不在种子数据硬编码生产密码，启动时按需创建。
-  # 仅本地/开发环境开启；生产务必关闭 enabled 并通过环境变量注入初始密码。
+  # 本地开发：在 .env / 环境变量设置 SUPER_ADMIN_PASSWORD（12-64 位），勿把真实口令提交进仓库。
+  # 生产：由 application-prod.yml + 环境变量注入；库中已有超管时自动跳过。
   event:
     session:
       clear-buffer-minutes: 30
@@ -146,10 +147,11 @@ flashticket:
       reconcile-ms: 10000
   bootstrap:
     super-admin:
-      enabled: true
-      username: superadmin
-      email: superadmin@flashticket.local
-      password: "SuperAdmin@2026"
+      enabled: ${SUPER_ADMIN_ENABLED:true}
+      username: ${SUPER_ADMIN_USERNAME:superadmin}
+      email: ${SUPER_ADMIN_EMAIL:superadmin@flashticket.local}
+      # 无默认口令：未设置时引导创建会跳过并打 warn（见 SuperAdminBootstrap）
+      password: ${SUPER_ADMIN_PASSWORD:}
 
 logging:
   level:

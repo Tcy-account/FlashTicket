@@ -12,17 +12,19 @@
 docker compose up -d
 ```
 
+> **安全提示**：仓库内不再提供真实默认口令。本地请复制 `.env.example` 为 `.env` 并改掉 `DB_PASSWORD` / `SUPER_ADMIN_PASSWORD` / Grafana 口令后再长期使用；生产见 `docker-compose.prod.yml`（口令必填）。
+
 `docker-compose.yml` 顶层声明了 `name: flashticket`，容器在 Docker Desktop 的 Containers 列表折叠为 **flashticket** 分组，可整组一键启动/停止。
 
 | 服务 | 镜像 | 宿主端口 | 说明 |
 |---|---|---|---|
-| mysql | mysql:8.4 | 33061 | 库名 flashticket，utf8mb4，UTC，root/123456 |
+| mysql | mysql:8.4 | 33061 | 库名 flashticket，utf8mb4，UTC，root/${DB_PASSWORD:-changeme}（见 .env.example） |
 | redis | redis:7.4 | 16379 | 无密码（本地），会话/限流/库存准入快照 |
 | namesrv | apache/rocketmq:5.3.0 | 9876 | RocketMQ 注册中心 |
 | broker | apache/rocketmq:5.3.0 | 10911 | 消息存储 |
 | proxy | apache/rocketmq:5.3.0 | 8081 (gRPC) / 18080 (HTTP) | 后端 v5 客户端连 gRPC 8081 |
 | prometheus | prom/prometheus:v2.55.1 | 9090 | 抓后端 `/actuator/prometheus` |
-| grafana | grafana/grafana:11.4.0 | 3000 | admin/admin，预置「FlashTicket 运营监控」看板 |
+| grafana | grafana/grafana:11.4.0 | 3000 | admin/${GF_SECURITY_ADMIN_PASSWORD:-changeme}，预置「FlashTicket 运营监控」看板 |
 
 > 端口特意避开本地 3306/6379（本机已装 MySQL 9.3），防止冲突。
 
@@ -68,7 +70,7 @@ pnpm dev       # 一键并行启动双前端
 | `GET http://localhost:8080/api/v1/health/readiness` | 200，`db=UP` + `redis=UP` |
 | `GET http://localhost:8080/actuator/prometheus` | Prometheus 指标（M17 起） |
 | http://localhost:9090 | Prometheus（target `flashticket-backend` 应 `up`） |
-| http://localhost:3000 | Grafana（admin/admin，预置「FlashTicket 运营监控」看板） |
+| http://localhost:3000 | Grafana（默认 admin/changeme，可用环境变量覆盖，预置「FlashTicket 运营监控」看板） |
 
 停掉 flashticket 分组后再次请求 readiness，应返回 **503 + `SERVICE_UNAVAILABLE`**。
 
